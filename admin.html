@@ -295,11 +295,30 @@ function renderAjustes() {
       <input type="file" id="s-qr-deuna" accept="image/*" aria-label="Subir QR de DeUna">
       <button class="btn block" id="s-save">Guardar ajustes</button>
     </section>
-    <aside style="display:flex;flex-direction:column;gap:16px;min-width:0">${shareCard()}
+    <aside style="display:flex;flex-direction:column;gap:16px;min-width:0">
+      <div class="card" id="notif"><h3>Avisos de reservas nuevas</h3>
+        <p class="muted" style="margin:0;font-size:13px">Recibe una notificación en el celular cada vez que alguien reserve por la web, aunque el panel esté cerrado.</p>
+        <ol style="margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:4px">
+          <li>Instala la app gratuita <b>ntfy</b> desde Play Store o App Store.</li>
+          <li>En ntfy toca <b>+</b>, pega este nombre de canal y pulsa <b>Suscribirse</b>:</li>
+        </ol>
+        <code id="n-topic">Cargando…</code>
+        <button class="btn ghost block" id="n-copy">Copiar nombre del canal</button>
+        <button class="btn block" id="n-test">Enviar notificación de prueba</button>
+        <p class="muted" style="margin:0;font-size:12px">No compartas este nombre: quien lo tenga puede ver los avisos.</p>
+      </div>
+      ${shareCard()}
       <div class="card"><h3>Instalar en el celular</h3>${installHtml() || `<p class="muted" style="margin:0">✓ Ya estás usando la app instalada.</p>`}<p class="muted" style="margin:0;font-size:13px">Si no aparece el botón: en Chrome toca ⋮ › "Agregar a la pantalla principal". En iPhone, Safari › Compartir › "Agregar a inicio".</p></div>
       <button class="btn ghost" id="out">Cerrar sesión</button></aside></div>`;
   bindShare();
   $("out").onclick = logout;
+  sb.rpc("get_ntfy_topic").then(({ data, error }) => {
+    if (!$("n-topic")) return;
+    if (error) { $("n-topic").textContent = "Falta activar: ejecuta supabase/03-notificaciones.sql en Supabase."; $("n-copy").hidden = $("n-test").hidden = true; return; }
+    $("n-topic").textContent = data;
+  });
+  $("n-copy").onclick = () => navigator.clipboard.writeText($("n-topic").textContent).then(() => toast("Nombre del canal copiado."), () => { getSelection().selectAllChildren($("n-topic")); toast("Selecciona y copia el nombre."); });
+  $("n-test").onclick = async () => { const { error } = await sb.rpc("test_ntfy"); toast(error ? errMsg(error) : "Prueba enviada. Revisa tu celular."); };
   $("s-save").onclick = async () => {
     const btn = $("s-save"); btn.disabled = true;
     try {
