@@ -10,6 +10,7 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Canchas Admin">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="styles.css">
 <style>
@@ -295,7 +296,7 @@ function renderAjustes() {
       <button class="btn block" id="s-save">Guardar ajustes</button>
     </section>
     <aside style="display:flex;flex-direction:column;gap:16px;min-width:0">${shareCard()}
-      <div class="card"><h3>Instalar en el celular</h3><p class="muted" style="margin:0;font-size:14px">Abre esta página en Chrome y toca ⋮ › "Agregar a la pantalla principal". En iPhone, Safari › Compartir › "Agregar a inicio".</p></div>
+      <div class="card"><h3>Instalar en el celular</h3>${installHtml() || `<p class="muted" style="margin:0">✓ Ya estás usando la app instalada.</p>`}<p class="muted" style="margin:0;font-size:13px">Si no aparece el botón: en Chrome toca ⋮ › "Agregar a la pantalla principal". En iPhone, Safari › Compartir › "Agregar a inicio".</p></div>
       <button class="btn ghost" id="out">Cerrar sesión</button></aside></div>`;
   bindShare();
   $("out").onclick = logout;

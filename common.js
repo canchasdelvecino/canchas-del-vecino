@@ -32,3 +32,22 @@ function waLink(phone, text) {
 function setupMissing(el) {
   el.innerHTML = `<div class="card"><h2>Falta conectar la base de datos</h2><p class="muted">Completa <code>config.js</code> con la Project URL y la anon key de Supabase.</p></div>`;
 }
+
+// ---------- Instalar como app ----------
+if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+let installPrompt = null;
+addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; document.querySelectorAll("[data-install]").forEach(b => (b.hidden = false)); });
+function isStandalone() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
+function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+// Devuelve el HTML de un botón "Instalar app" (Android) o una ayuda (iPhone); nada si ya está instalada
+function installHtml() {
+  if (isStandalone()) return "";
+  if (isIOS()) return `<p class="muted" style="margin:0;font-size:13px">📲 Para tenerla como app: toca <b>Compartir</b> y luego <b>Agregar a inicio</b>.</p>`;
+  return `<button class="btn ghost block" data-install ${installPrompt ? "" : "hidden"}>📲 Instalar app en el celular</button>`;
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-install]"); if (!b || !installPrompt) return;
+  installPrompt.prompt(); const r = await installPrompt.userChoice; installPrompt = null;
+  document.querySelectorAll("[data-install]").forEach(x => (x.hidden = true));
+  if (r.outcome === "accepted") toast("¡App instalada! Búscala en tu pantalla de inicio.");
+});
