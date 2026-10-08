@@ -131,6 +131,11 @@ async function loadAgenda() {
     sb.from("bookings").select("id,day,hour,name").eq("status", "pending").gte("day", today).order("day").order("hour"),
   ]);
   A.bookings = day || []; A.pending = pend || [];
+  // Recordatorios: reservas confirmadas de hoy (que aún no empiezan) y mañana, con celular y sin recordatorio enviado
+  const n = nowEc();
+  const { data: rem, error: remErr } = await sb.from("bookings").select("id,day,hour,name,phone,reminded_at")
+    .eq("status", "confirmed").gte("day", n.date).lte("day", addDays(n.date, 1)).neq("phone", "").is("reminded_at", null).order("day").order("hour");
+  A.reminders = remErr ? null : (rem || []).filter(r => !(r.day === n.date && r.hour <= n.hour));
   renderAgenda();
 }
 function renderAgenda() {
@@ -157,6 +162,7 @@ function renderAgenda() {
       <div class="card"><h3>Por revisar</h3>
         ${A.pending.length ? A.pending.map(p => `<button class="btn ghost sm" data-goto="${p.day}" style="text-align:left">${dayLabel(p.day)} · ${fmtH(p.hour)} · ${esc(p.name)}</button>`).join("") : `<p class="muted" style="margin:0">No hay comprobantes por revisar.</p>`}
       </div>
+      ${remindersCard()}
       ${shareCard()}
     </aside></div>`;
   bindAgenda(by);
@@ -171,7 +177,7 @@ function itemHtml(h, b) {
   }
   const st = b.status === "pending" ? `<span class="pill pend">Revisar pago</span>` : `<span class="pill ok">Confirmada</span>`;
   const py = b.paid ? `<span class="pill paid">Pagado</span>` : b.pay_mode === "cash" ? `<span class="pill cash">Efectivo al final</span>` : "";
-  const msg = b.status === "pending" ? "" : `Hola ${b.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)}. ¡Te esperamos!`;
+  const msg = b.status === "pending" ? `Hola ${b.name}, recibimos tu comprobante. Tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)} está confirmada. ¡Te esperamos!` : `Hola ${b.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)}. ¡Te esperamos!`;
   const wa = b.phone ? `<a class="btn wa sm" href="${waLink(b.phone, msg)}" target="_blank" rel="noopener">WhatsApp</a>` : "";
   const rec = b.receipt_path ? `<button class="btn ghost sm" data-rec="${esc(b.receipt_path)}">Ver comprobante</button>` : "";
   const acts = b.status === "pending"
@@ -205,7 +211,28 @@ function bindAgenda() {
     if (error) return toast(error.code === "23505" ? "Esa hora ya fue reservada." : errMsg(error));
     A.walk = null; toast("Hora reservada."); loadAgenda();
   };
+  app.querySelectorAll("[data-remind]").forEach(a => (a.onclick = () => {
+    // El enlace abre WhatsApp; marcamos el recordatorio como enviado
+    sb.from("bookings").update({ reminded_at: new Date().toISOString() }).eq("id", a.dataset.remind).then(({ error }) => {
+      if (error) return toast(errMsg(error));
+      A.reminders = (A.reminders || []).filter(r => r.id !== a.dataset.remind);
+      const card = $("reminders"); if (card) card.outerHTML = remindersCard();
+      bindAgenda();
+    });
+  }));
   bindShare();
+}
+function reminderText(r) {
+  const when = r.day === nowEc().date ? "hoy" : "mañana";
+  return `Hola ${r.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal ${when} ${dayLabel(r.day)} de ${fmtH(r.hour)} a ${fmtH(r.hour + 1)}. Si no puedes asistir, avísanos para liberar la hora. ¡Te esperamos! ⚽`;
+}
+function remindersCard() {
+  if (A.reminders === null) return `<div class="card" id="reminders"><h3>Recordatorios</h3><p class="muted" style="margin:0;font-size:13px">Para activarlos, ejecuta <code>supabase/02-recordatorios.sql</code> en Supabase.</p></div>`;
+  const list = A.reminders || [];
+  return `<div class="card" id="reminders"><h3>Recordatorios</h3>
+    <p class="muted" style="margin:0;font-size:13px">Reservas de hoy y mañana. Toca para enviar el mensaje por WhatsApp.</p>
+    ${list.length ? list.map(r => `<a class="btn wa sm" style="text-align:left" data-remind="${r.id}" href="${waLink(r.phone, reminderText(r))}" target="_blank" rel="noopener">${r.day === nowEc().date ? "Hoy" : "Mañana"} ${fmtH(r.hour)} · ${esc(r.name)}</a>`).join("") : `<p style="margin:0">✓ No hay recordatorios pendientes.</p>`}
+  </div>`;
 }
 function shareCard() {
   return `<div class="card"><h3>Enlace para clientes</h3>
