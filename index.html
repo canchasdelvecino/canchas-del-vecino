@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Reservas · Canchas del Vecino El Naranjal</title>
+<meta name="description" content="Reserva tu hora en la cancha sintética Canchas del Vecino, El Naranjal.">
+<meta property="og:title" content="Reserva tu cancha · Canchas del Vecino El Naranjal">
+<meta property="og:description" content="Mira las horas libres y separa la tuya.">
+<meta property="og:image" content="logo.png">
+<meta name="theme-color" content="#1f7a3f">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>
+.wrap{max-width:440px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.hero{background:var(--turf);color:var(--turf-ink);border-radius:20px;padding:16px;display:flex;align-items:center;gap:12px;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;right:-40px;top:50%;width:120px;height:120px;border:2px solid rgb(255 255 255 / .3);border-radius:50%;transform:translateY(-50%)}
+.hero .logo{width:88px;filter:drop-shadow(0 3px 6px rgb(0 0 0 / .35));position:relative;z-index:1}
+.hero h1{font-size:28px;font-weight:800}
+.hero p{margin:2px 0 0;font-size:14px;opacity:.9}
+.summary{background:var(--bg);border-radius:12px;padding:12px;display:flex;justify-content:space-between;align-items:center}
+.summary b{font-family:var(--display);font-size:24px}
+.qr img{width:100%;max-width:240px;display:block;margin:0 auto;border-radius:8px;background:#fff}
+.ticket{border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
+.ticket dt{color:var(--muted)} .ticket dd{margin:0;font-weight:600}
+.pre{white-space:pre-line;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <img class="logo" src="logo.png" alt="Logo Canchas del Vecino El Naranjal">
+    <div><h1>Reserva tu cancha</h1><p id="sub">Canchas del Vecino · El Naranjal</p></div>
+  </div>
+  <main id="app" class="card"><p class="muted">Cargando horarios…</p></main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+const S = {
+  settings: null, taken: {}, day: null, days: [],
+  step: "grid", hour: null, pay: "cash", method: "jardin", file: null,
+  form: { name: "", cedula: "", phone: "" }, error: "", busy: false, result: null,
+};
+const app = document.getElementById("app");
+
+async function load() {
+  if (!sb) return setupMissing(app);
+  const today = nowEc().date;
+  S.days = Array.from({ length: 14 }, (_, i) => addDays(today, i));
+  S.day = S.day || today;
+  const [{ data: st, error: e1 }, { data: av, error: e2 }] = await Promise.all([
+    sb.from("settings").select("*").eq("id", 1).single(),
+    sb.rpc("get_availability", { from_day: S.days[0], to_day: S.days[13] }),
+  ]);
+  if (e1 || e2) { app.innerHTML = `<p class="err">No se pudieron cargar los horarios. Revisa tu conexión y recarga la página.</p>`; return; }
+  S.settings = st;
+  S.taken = {};
+  (av || []).forEach(r => (S.taken[r.day + "|" + r.hour] = r.status));
+  document.getElementById("sub").textContent = `Canchas del Vecino · El Naranjal · ${money(st.price)} la hora`;
+  render();
+}
+
+function slotState(day, h) {
+  const n = nowEc();
+  if (day === n.date && h <= n.hour) return "past";
+  const t = S.taken[day + "|" + h];
+  return !t ? "free" : t === "pending" ? "pend" : "busy";
+}
+
+function render() {
+  const st = S.settings;
+  if (S.step === "grid") {
+    const hours = []; for (let h = st.open_hour; h < st.close_hour; h++) hours.push(h);
+    const today = S.days[0];
+    app.innerHTML = `
+      <div class="days" role="group" aria-label="Día">${S.days.map(d => { const p = dayParts(d); return `
+        <button class="day" data-day="${d}" aria-pressed="${d === S.day}"><small>${d === today ? "Hoy" : p.dow}</small><b>${p.d}</b><small>${p.m}</small></button>`; }).join("")}
+      </div>
+      <div class="legend"><span><i style="background:var(--turf)"></i>Libre</span><span><i style="background:var(--pend)"></i>Por confirmar</span><span><i style="background:var(--busy)"></i>Ocupado</span></div>
+      <div class="slots">${hours.map(h => { const s = slotState(S.day, h);
+        const lab = { free: money(st.price) + " · Libre", pend: "Por confirmar", busy: "Ocupado", past: "Ya pasó" }[s];
+        return `<button class="slot ${s === "free" ? "" : s}" data-h="${h}" ${s === "free" ? "" : "disabled"}><span class="h">${fmtH(h)}–${fmtH(h + 1)}</span><span class="s">${lab}</span></button>`; }).join("")}
+      </div>`;
+  } else if (S.step === "form") {
+    const pre = st.require_prepay; if (pre) S.pay = "now";
+    const methods = [["jardin", "QR Jardín Azuayo", st.qr_jardin_url], ["transfer", "Transferencia", st.bank_info], ["deuna", "DeUna", st.qr_deuna_url]].filter(m => m[2]);
+    if (methods.length && !methods.some(m => m[0] === S.method)) S.method = methods[0][0];
+    const m = methods.find(x => x[0] === S.method);
+    app.innerHTML = `
+      <button class="btn ghost sm" id="back" style="align-self:flex-start">← Cambiar hora</button>
+      <div class="summary"><div><small class="muted">${dayLabel(S.day)}</small><br><b>${fmtH(S.hour)}–${fmtH(S.hour + 1)}</b></div><b>${money(st.price)}</b></div>
+      <div class="field"><label for="f-name">Nombre completo</label><input id="f-name" value="${esc(S.form.name)}" placeholder="Ej. Juan Pérez" autocomplete="name"></div>
+      <div class="field"><label for="f-cedula">Cédula</label><input id="f-cedula" value="${esc(S.form.cedula)}" inputmode="numeric" maxlength="10" placeholder="10 dígitos"></div>
+      <div class="field"><label for="f-phone">Celular (WhatsApp)</label><input id="f-phone" value="${esc(S.form.phone)}" inputmode="tel" maxlength="10" placeholder="09xxxxxxxx" autocomplete="tel"></div>
+      <div role="radiogroup" aria-label="Forma de pago" style="display:flex;flex-direction:column;gap:8px">
+        <label class="opt ${S.pay === "now" ? "on" : ""}"><input type="radio" name="pay" value="now" ${S.pay === "now" ? "checked" : ""}><span><b>Pagar ahora</b><small>QR Jardín Azuayo, transferencia o DeUna</small></span></label>
+        <label class="opt ${S.pay === "cash" ? "on" : ""} ${pre ? "disabled" : ""}"><input type="radio" name="pay" value="cash" ${S.pay === "cash" ? "checked" : ""} ${pre ? "disabled" : ""}><span><b>Pagar en la cancha</b><small>${pre ? "Por ahora se pide el pago al reservar" : "En efectivo al terminar el partido"}</small></span></label>
+      </div>
+      ${S.pay === "now" ? `<div class="card" style="border-style:dashed">
+        ${methods.length ? `<div class="chips" role="group" aria-label="Método de pago">${methods.map(([k, l]) => `<button data-m="${k}" aria-pressed="${S.method === k}">${l}</button>`).join("")}</div>
+        ${S.method === "transfer" ? `<div class="pre">${esc(m[2])}</div>` : `<div class="qr"><img src="${esc(m[2])}" alt="Código QR para pagar"></div><p class="muted" style="margin:0;font-size:13px;text-align:center">Escanea y paga ${money(st.price)}</p>`}`
+          : `<p class="muted" style="margin:0">Pide los datos de pago a la cancha.</p>`}
+        <div class="field"><label for="f-file">Foto del comprobante</label><input type="file" id="f-file" accept="image/*,application/pdf"></div>
+        ${S.file ? `<small style="color:var(--turf)">✓ ${esc(S.file.name)}</small>` : ""}
+      </div>` : ""}
+      ${S.error ? `<p class="err" role="alert">${esc(S.error)}</p>` : ""}
+      <button class="btn block" id="confirm" ${S.busy ? "disabled" : ""}>${S.busy ? "Reservando…" : "Reservar"}</button>`;
+  } else {
+    const r = S.result;
+    app.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px;text-align:center">
+      <h2 style="font-size:30px">${r.pay === "now" ? "Reserva enviada" : "¡Reservado!"}</h2>
+      <p class="muted" style="margin:0">${r.pay === "now" ? "La cancha revisará tu comprobante y te confirmará por WhatsApp." : "Tu hora queda separada. Pagas en efectivo al terminar el partido."}</p>
+      <dl class="ticket" style="text-align:left"><dt>Día</dt><dd>${dayLabel(r.day)}</dd><dt>Hora</dt><dd>${fmtH(r.hour)}–${fmtH(r.hour + 1)}</dd><dt>A nombre de</dt><dd>${esc(r.name)}</dd><dt>Pago</dt><dd>${money(r.price)} · ${r.pay === "now" ? "comprobante enviado" : "en la cancha"}</dd></dl>
+      <p class="muted" style="margin:0;font-size:13px">Toma captura de esta pantalla. Si no puedes asistir, avisa a la cancha para liberar la hora.</p>
+      ${st.admin_whatsapp ? `<a class="btn wa block" href="${waLink(st.admin_whatsapp, `Hola, reservé la cancha el ${dayLabel(r.day)} de ${fmtH(r.hour)} a ${fmtH(r.hour + 1)} a nombre de ${r.name}.`)}" target="_blank" rel="noopener">Escribir a la cancha por WhatsApp</a>` : ""}
+      <button class="btn ghost block" id="again">Ver horarios</button></div>`;
+  }
+  bind();
+}
+
+function bind() {
+  app.querySelectorAll(".day").forEach(b => (b.onclick = () => { S.day = b.dataset.day; render(); }));
+  app.querySelectorAll(".slot").forEach(b => (b.onclick = () => { S.hour = +b.dataset.h; S.step = "form"; S.error = ""; S.file = null; render(); window.scrollTo(0, 0); }));
+  const q = id => document.getElementById(id);
+  if (q("back")) q("back").onclick = () => { S.step = "grid"; render(); };
+  if (q("again")) q("again").onclick = () => { S.step = "grid"; load(); };
+  ["name", "cedula", "phone"].forEach(k => { if (q("f-" + k)) q("f-" + k).oninput = e => (S.form[k] = e.target.value); });
+  app.querySelectorAll('input[name="pay"]').forEach(r => (r.onchange = () => { S.pay = r.value; render(); }));
+  app.querySelectorAll("[data-m]").forEach(b => (b.onclick = () => { S.method = b.dataset.m; render(); }));
+  if (q("f-file")) q("f-file").onchange = e => { S.file = e.target.files[0] || null; render(); };
+  if (q("confirm")) q("confirm").onclick = submit;
+}
+
+async function submit() {
+  const { name, cedula, phone } = S.form;
+  S.error = "";
+  if (name.trim().length < 3) S.error = "Escribe tu nombre completo.";
+  else if (!/^\d{10}$/.test(cedula)) S.error = "La cédula debe tener 10 dígitos.";
+  else if (!/^09\d{8}$/.test(phone)) S.error = "El celular debe empezar con 09 y tener 10 dígitos.";
+  else if (S.pay === "now" && !S.file) S.error = "Sube la foto del comprobante para continuar.";
+  else if (S.file && S.file.size > 8 * 1024 * 1024) S.error = "La foto pesa más de 8 MB. Envía una captura más liviana.";
+  if (S.error) return render();
+  S.busy = true; render();
+  try {
+    let path = null;
+    if (S.pay === "now") {
+      const ext = (S.file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+      path = `${S.day}/${S.hour}-${crypto.randomUUID()}.${ext}`;
+      const { error } = await sb.storage.from("receipts").upload(path, S.file, { contentType: S.file.type });
+      if (error) throw new Error("No se pudo subir el comprobante. Intenta de nuevo.");
+    }
+    const { error } = await sb.rpc("create_booking", {
+      p_day: S.day, p_hour: S.hour, p_name: name.trim(), p_cedula: cedula, p_phone: phone,
+      p_pay_mode: S.pay, p_method: S.pay === "now" ? S.method : null, p_receipt_path: path,
+    });
+    if (error) throw error;
+    S.result = { day: S.day, hour: S.hour, name: name.trim(), pay: S.pay, price: S.settings.price };
+    S.step = "done";
+  } catch (e) { S.error = errMsg(e); }
+  S.busy = false; render();
+}
+
+load();
+// Refresca los horarios cada 20 segundos y al volver a la pestaña
+setInterval(() => { if (S.step === "grid") load(); }, 20000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && S.step === "grid") load(); });
+</script>
+</body>
+</html>

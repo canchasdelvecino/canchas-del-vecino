@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Administrador · Canchas del Vecino</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#1f7a3f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.tabs{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px;gap:4px}
+.tabs button{border:0;background:transparent;font-weight:600;font-size:14px;padding:8px 14px;border-radius:999px;cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--turf);color:var(--turf-ink)}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+@media (max-width:860px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.kpi{background:var(--bg);border-radius:12px;padding:10px 12px}
+.kpi small{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.kpi b{font-family:var(--display);font-size:28px;font-variant-numeric:tabular-nums}
+.item{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.item .t{font-family:var(--display);font-weight:700;font-size:20px;font-variant-numeric:tabular-nums}
+.item .who b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .who small{color:var(--muted);font-size:12px}
+.acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.item.free .who{color:var(--muted)}
+@media (max-width:560px){.item{grid-template-columns:52px minmax(0,1fr)}.acts{grid-column:1/-1;justify-content:flex-start}}
+.walk{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:end;background:var(--bg);border-radius:12px;padding:10px}
+.walk .field{flex:1 1 140px}
+.set{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.set p{margin:0} .set small{display:block;color:var(--muted);font-size:12px}
+.toggle{position:relative;width:46px;height:26px;flex:0 0 auto}
+.toggle input{opacity:0;position:absolute;inset:0;margin:0;cursor:pointer}
+.toggle span{position:absolute;inset:0;background:var(--busy);border-radius:999px;transition:.2s;pointer-events:none}
+.toggle span::after{content:"";position:absolute;width:20px;height:20px;top:3px;left:3px;background:var(--surface);border-radius:50%;transition:.2s}
+.toggle input:checked + span{background:var(--turf)}
+.toggle input:checked + span::after{transform:translateX(20px)}
+.bars{display:flex;align-items:flex-end;gap:3px;height:140px}
+.bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;min-width:0}
+.bar div{background:var(--turf);border-radius:3px 3px 0 0;min-height:2px}
+.bar.today div{background:var(--fg)}
+.axis{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.qrprev{width:96px;height:96px;object-fit:contain;background:#fff;border-radius:8px;border:1px solid var(--line)}
+.login{max-width:380px;margin:40px auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><img class="logo" src="logo.png" alt="Logo Canchas del Vecino El Naranjal"><h1>Canchas del Vecino <span>Administrador</span></h1></div>
+    <div class="tabs" id="tabs" hidden role="group" aria-label="Secciones">
+      <button data-tab="agenda" aria-pressed="true">Agenda</button>
+      <button data-tab="reportes" aria-pressed="false">Reportes</button>
+      <button data-tab="ajustes" aria-pressed="false">Ajustes</button>
+    </div>
+  </header>
+  <div id="app"><p class="muted">Cargando…</p></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+const A = { tab: "agenda", settings: null, day: null, bookings: [], pending: [], walk: null, report: null, channel: null };
+const app = document.getElementById("app");
+const $ = id => document.getElementById(id);
+const publicUrl = () => new URL("./", location.href).href;
+
+/* ---------- Sesión ---------- */
+async function start() {
+  if (!sb) return setupMissing(app);
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return renderLogin();
+  const { data: me } = await sb.from("admins").select("user_id").eq("user_id", session.user.id).maybeSingle();
+  if (!me) {
+    app.innerHTML = `<div class="card login"><h2>Sin permiso</h2><p class="muted">La cuenta ${esc(session.user.email)} no está registrada como administradora.</p><button class="btn ghost" id="out">Salir</button></div>`;
+    $("out").onclick = logout; return;
+  }
+  $("tabs").hidden = false;
+  A.day = A.day || nowEc().date;
+  await loadSettings();
+  subscribe();
+  show(A.tab);
+}
+function renderLogin(err = "") {
+  $("tabs").hidden = true;
+  app.innerHTML = `<form class="card login" id="login">
+    <h2>Ingresar</h2>
+    <div class="field"><label for="l-email">Correo</label><input id="l-email" type="email" autocomplete="username" required></div>
+    <div class="field"><label for="l-pass">Contraseña</label><input id="l-pass" type="password" autocomplete="current-password" required></div>
+    ${err ? `<p class="err">${esc(err)}</p>` : ""}
+    <button class="btn block" type="submit">Ingresar</button></form>`;
+  $("login").onsubmit = async e => {
+    e.preventDefault();
+    const { error } = await sb.auth.signInWithPassword({ email: $("l-email").value.trim(), password: $("l-pass").value });
+    if (error) return renderLogin("Correo o contraseña incorrectos.");
+    start();
+  };
+}
+async function logout() { await sb.auth.signOut(); if (A.channel) sb.removeChannel(A.channel); A.channel = null; renderLogin(); }
+
+function subscribe() {
+  if (A.channel) return;
+  A.channel = sb.channel("bookings-admin")
+    .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, p => {
+      if (p.eventType === "INSERT" && p.new.source === "web") toast(`Nueva reserva: ${p.new.name}, ${dayLabel(p.new.day)} ${fmtH(p.new.hour)}`);
+      if (A.tab === "agenda") loadAgenda(); else if (A.tab === "reportes") loadReport();
+    }).subscribe();
+}
+async function loadSettings() { const { data } = await sb.from("settings").select("*").eq("id", 1).single(); A.settings = data; }
+
+function show(tab) {
+  A.tab = tab;
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-pressed", b.dataset.tab === tab));
+  if (tab === "agenda") loadAgenda(); else if (tab === "reportes") loadReport(); else renderAjustes();
+}
+document.querySelectorAll("#tabs button").forEach(b => (b.onclick = () => show(b.dataset.tab)));
+
+/* ---------- Agenda ---------- */
+async function loadAgenda() {
+  const today = nowEc().date;
+  const [{ data: day }, { data: pend }] = await Promise.all([
+    sb.from("bookings").select("*").eq("day", A.day).neq("status", "cancelled"),
+    sb.from("bookings").select("id,day,hour,name").eq("status", "pending").gte("day", today).order("day").order("hour"),
+  ]);
+  A.bookings = day || []; A.pending = pend || [];
+  renderAgenda();
+}
+function renderAgenda() {
+  const st = A.settings, today = nowEc().date;
+  const days = Array.from({ length: 14 }, (_, i) => addDays(today, i));
+  const by = Object.fromEntries(A.bookings.map(b => [b.hour, b]));
+  const hours = []; for (let h = st.open_hour; h < st.close_hour; h++) hours.push(h);
+  const cobrado = A.bookings.filter(b => b.paid).reduce((s, b) => s + +b.price, 0);
+  const porCobrar = A.bookings.filter(b => !b.paid && b.status === "confirmed").reduce((s, b) => s + +b.price, 0);
+
+  app.innerHTML = `<div class="grid2">
+    <section class="card">
+      <div class="set" style="flex-wrap:wrap"><h2 style="font-size:24px">${A.day === today ? "Hoy" : dayLabel(A.day)}</h2>
+        <input type="date" id="pick" value="${A.day}" aria-label="Elegir fecha" style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px 10px"></div>
+      <div class="days" role="group" aria-label="Día">${days.map(d => { const p = dayParts(d); return `<button class="day" data-day="${d}" aria-pressed="${d === A.day}"><small>${d === today ? "Hoy" : p.dow}</small><b>${p.d}</b></button>`; }).join("")}</div>
+      <div class="kpis">
+        <div class="kpi"><small>Reservadas</small><b>${A.bookings.length}/${hours.length}</b></div>
+        <div class="kpi"><small>Cobrado</small><b>${money(cobrado)}</b></div>
+        <div class="kpi"><small>Por cobrar</small><b>${money(porCobrar)}</b></div>
+      </div>
+      <div>${hours.map(h => itemHtml(h, by[h])).join("")}</div>
+    </section>
+    <aside style="display:flex;flex-direction:column;gap:16px;min-width:0">
+      <div class="card"><h3>Por revisar</h3>
+        ${A.pending.length ? A.pending.map(p => `<button class="btn ghost sm" data-goto="${p.day}" style="text-align:left">${dayLabel(p.day)} · ${fmtH(p.hour)} · ${esc(p.name)}</button>`).join("") : `<p class="muted" style="margin:0">No hay comprobantes por revisar.</p>`}
+      </div>
+      ${shareCard()}
+    </aside></div>`;
+  bindAgenda(by);
+}
+function itemHtml(h, b) {
+  if (!b) {
+    if (A.walk === h) return `<div class="item"><span class="t">${fmtH(h)}</span><div class="walk">
+      <div class="field"><label for="w-name">Nombre</label><input id="w-name" placeholder="Quién reserva"></div>
+      <div class="field"><label for="w-phone">Celular (opcional)</label><input id="w-phone" inputmode="tel" maxlength="10" placeholder="09xxxxxxxx"></div>
+      <button class="btn sm" id="w-save">Guardar</button><button class="btn ghost sm" id="w-cancel">Cancelar</button></div></div>`;
+    return `<div class="item free"><span class="t">${fmtH(h)}</span><div class="who">Libre</div><div class="acts"><button class="btn ghost sm" data-walk="${h}">+ Reservar</button></div></div>`;
+  }
+  const st = b.status === "pending" ? `<span class="pill pend">Revisar pago</span>` : `<span class="pill ok">Confirmada</span>`;
+  const py = b.paid ? `<span class="pill paid">Pagado</span>` : b.pay_mode === "cash" ? `<span class="pill cash">Efectivo al final</span>` : "";
+  const msg = b.status === "pending" ? "" : `Hola ${b.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)}. ¡Te esperamos!`;
+  const wa = b.phone ? `<a class="btn wa sm" href="${waLink(b.phone, msg)}" target="_blank" rel="noopener">WhatsApp</a>` : "";
+  const rec = b.receipt_path ? `<button class="btn ghost sm" data-rec="${esc(b.receipt_path)}">Ver comprobante</button>` : "";
+  const acts = b.status === "pending"
+    ? `${rec}<button class="btn sm" data-ok="${b.id}">Confirmar pago</button><button class="btn warn sm" data-del="${b.id}">Rechazar</button>${wa}`
+    : `${rec}${b.paid ? "" : `<button class="btn sm" data-cash="${b.id}">Cobré ${money(b.price)}</button>`}${wa}<button class="btn warn sm" data-del="${b.id}">Cancelar</button>`;
+  return `<div class="item"><span class="t">${fmtH(h)}</span><div class="who"><b>${esc(b.name)}</b><small>${b.cedula ? "CI " + esc(b.cedula) + " · " : ""}${esc(b.phone || "sin celular")}${b.source === "admin" ? " · desde el panel" : ""}</small><div>${st}${py}</div></div><div class="acts">${acts}</div></div>`;
+}
+function bindAgenda() {
+  app.querySelectorAll("[data-day],[data-goto]").forEach(b => (b.onclick = () => { A.day = b.dataset.day || b.dataset.goto; A.walk = null; loadAgenda(); }));
+  $("pick").onchange = e => { if (e.target.value) { A.day = e.target.value; loadAgenda(); } };
+  const upd = async (id, patch, msg) => { const { error } = await sb.from("bookings").update(patch).eq("id", id); if (error) return toast(errMsg(error)); toast(msg); loadAgenda(); };
+  app.querySelectorAll("[data-ok]").forEach(b => (b.onclick = () => upd(b.dataset.ok, { status: "confirmed", paid: true }, "Pago confirmado. La hora aparece ocupada en la web.")));
+  app.querySelectorAll("[data-cash]").forEach(b => (b.onclick = () => upd(b.dataset.cash, { paid: true }, "Pago en efectivo registrado.")));
+  app.querySelectorAll("[data-del]").forEach(b => (b.onclick = () => {
+    if (b.dataset.sure) return upd(b.dataset.del, { status: "cancelled" }, "Hora liberada en la web.");
+    b.dataset.sure = "1"; b.textContent = "¿Seguro? Toca otra vez"; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = "Cancelar"; } }, 4000);
+  }));
+  app.querySelectorAll("[data-rec]").forEach(b => (b.onclick = async () => {
+    const w = window.open("", "_blank");
+    const { data, error } = await sb.storage.from("receipts").createSignedUrl(b.dataset.rec, 600);
+    if (error) { if (w) w.close(); return toast("No se pudo abrir el comprobante."); }
+    if (w) w.location = data.signedUrl; else location.href = data.signedUrl;
+  }));
+  app.querySelectorAll("[data-walk]").forEach(b => (b.onclick = () => { A.walk = +b.dataset.walk; renderAgenda(); $("w-name").focus(); }));
+  if ($("w-cancel")) $("w-cancel").onclick = () => { A.walk = null; renderAgenda(); };
+  if ($("w-save")) $("w-save").onclick = async () => {
+    const name = $("w-name").value.trim(), phone = $("w-phone").value.trim();
+    if (name.length < 2) return toast("Escribe el nombre de quien reserva.");
+    if (phone && !/^09\d{8}$/.test(phone)) return toast("El celular debe empezar con 09 y tener 10 dígitos.");
+    const { error } = await sb.from("bookings").insert({ day: A.day, hour: A.walk, name, phone, pay_mode: "cash", status: "confirmed", price: A.settings.price, source: "admin" });
+    if (error) return toast(error.code === "23505" ? "Esa hora ya fue reservada." : errMsg(error));
+    A.walk = null; toast("Hora reservada."); loadAgenda();
+  };
+  bindShare();
+}
+function shareCard() {
+  return `<div class="card"><h3>Enlace para clientes</h3>
+    <p class="muted" style="margin:0;font-size:13px">Compártelo por WhatsApp, en estados o grupos. Los clientes ven las horas libres y reservan solos.</p>
+    <code id="link">${esc(publicUrl())}</code>
+    <a class="btn wa block" href="https://wa.me/?text=${encodeURIComponent("⚽ Reserva tu cancha en Canchas del Vecino El Naranjal. Mira las horas libres y separa la tuya aquí: " + publicUrl())}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
+    <button class="btn ghost block" id="copy">Copiar enlace</button></div>`;
+}
+function bindShare() {
+  if (!$("copy")) return;
+  $("copy").onclick = () => navigator.clipboard.writeText(publicUrl()).then(() => toast("Enlace copiado."), () => { getSelection().selectAllChildren($("link")); toast("Selecciona y copia el enlace."); });
+}
+
+/* ---------- Reportes ---------- */
+async function loadReport() {
+  const today = nowEc().date, from = addDays(today, -59);
+  const { data } = await sb.from("bookings").select("day,hour,price,paid,status").gte("day", from).lte("day", today).neq("status", "cancelled");
+  A.report = data || []; renderReport();
+}
+function renderReport() {
+  const today = nowEc().date, rows = A.report.filter(r => r.paid);
+  const sum = f => rows.filter(f).reduce((s, r) => s + +r.price, 0);
+  const dow = new Date(today + "T12:00:00Z").getUTCDay(), monday = addDays(today, -((dow + 6) % 7));
+  const month = today.slice(0, 7), prevMonth = addDays(month + "-01", -1).slice(0, 7);
+  const last30 = Array.from({ length: 30 }, (_, i) => addDays(today, i - 29));
+  const perDay = last30.map(d => sum(r => r.day === d)); const max = Math.max(...perDay, 1);
+  const byHour = {}; A.report.forEach(r => (byHour[r.hour] = (byHour[r.hour] || 0) + 1));
+  const top = Object.entries(byHour).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const topMax = top.length ? top[0][1] : 1;
+  app.innerHTML = `<div class="grid2">
+    <section class="card"><h2 style="font-size:24px">Ingresos cobrados</h2>
+      <div class="kpis"><div class="kpi"><small>Hoy</small><b>${money(sum(r => r.day === today))}</b></div>
+        <div class="kpi"><small>Esta semana</small><b>${money(sum(r => r.day >= monday))}</b></div>
+        <div class="kpi"><small>Este mes</small><b>${money(sum(r => r.day.startsWith(month)))}</b></div></div>
+      <p class="muted" style="margin:0;font-size:13px">Mes anterior: ${money(sum(r => r.day.startsWith(prevMonth)))}. Solo cuenta reservas marcadas como pagadas.</p>
+      <h3>Últimos 30 días</h3>
+      <div class="bars" role="img" aria-label="Ingresos por día de los últimos 30 días">${perDay.map((v, i) => `<div class="bar ${i === 29 ? "today" : ""}" title="${dayLabel(last30[i])}: ${money(v)}"><div style="height:${Math.round((v / max) * 100)}%"></div></div>`).join("")}</div>
+      <div class="axis"><span>${dayLabel(last30[0])}</span><span>Hoy</span></div>
+    </section>
+    <aside class="card"><h3>Horas más vendidas</h3><p class="muted" style="margin:0;font-size:13px">Últimos 60 días</p>
+      ${top.length ? top.map(([h, n]) => `<div><div class="set"><span>${fmtH(+h)}–${fmtH(+h + 1)}</span><b>${n}</b></div><div style="height:6px;background:var(--bg);border-radius:3px"><div style="height:100%;width:${(n / topMax) * 100}%;background:var(--turf);border-radius:3px"></div></div></div>`).join("") : `<p class="muted">Aún no hay reservas.</p>`}
+    </aside></div>`;
+}
+
+/* ---------- Ajustes ---------- */
+function renderAjustes() {
+  const s = A.settings;
+  const hourOpts = (sel, from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i).map(h => `<option value="${h}" ${h === sel ? "selected" : ""}>${fmtH(h)}</option>`).join("");
+  app.innerHTML = `<div class="grid2">
+    <section class="card"><h2 style="font-size:24px">Ajustes</h2>
+      <div class="set"><p>Precio por hora<small>Se aplica a las reservas nuevas</small></p><div style="display:flex;align-items:center;gap:4px;font-family:var(--display);font-size:24px">$<input id="s-price" type="number" min="1" step="0.5" value="${s.price}" style="width:84px;font:700 22px var(--display);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 8px"></div></div>
+      <div class="set"><p>Exigir pago al reservar<small>Oculta "Pagar en la cancha" en la web</small></p><label class="toggle"><input type="checkbox" id="s-pre" ${s.require_prepay ? "checked" : ""} aria-label="Exigir pago al reservar"><span></span></label></div>
+      <div class="set"><p>Horario<small>Turnos de una hora</small></p><div style="display:flex;gap:6px;align-items:center"><select id="s-open">${hourOpts(s.open_hour, 0, 23)}</select> a <select id="s-close">${hourOpts(s.close_hour, 1, 24)}</select></div></div>
+      <div class="field"><label for="s-wa">WhatsApp de la cancha</label><input id="s-wa" inputmode="tel" maxlength="10" placeholder="09xxxxxxxx" value="${esc(s.admin_whatsapp)}"></div>
+      <div class="field"><label for="s-bank">Datos para transferencia</label><textarea id="s-bank" rows="4" placeholder="Banco, tipo y número de cuenta, titular, cédula">${esc(s.bank_info)}</textarea></div>
+      <div class="set"><p>QR de Jardín Azuayo<small>Foto o captura del QR para cobrar</small></p>${s.qr_jardin_url ? `<img class="qrprev" src="${esc(s.qr_jardin_url)}" alt="QR Jardín Azuayo actual">` : ""}</div>
+      <input type="file" id="s-qr-jardin" accept="image/*" aria-label="Subir QR de Jardín Azuayo">
+      <div class="set"><p>QR de DeUna<small>Opcional</small></p>${s.qr_deuna_url ? `<img class="qrprev" src="${esc(s.qr_deuna_url)}" alt="QR DeUna actual">` : ""}</div>
+      <input type="file" id="s-qr-deuna" accept="image/*" aria-label="Subir QR de DeUna">
+      <button class="btn block" id="s-save">Guardar ajustes</button>
+    </section>
+    <aside style="display:flex;flex-direction:column;gap:16px;min-width:0">${shareCard()}
+      <div class="card"><h3>Instalar en el celular</h3><p class="muted" style="margin:0;font-size:14px">Abre esta página en Chrome y toca ⋮ › "Agregar a la pantalla principal". En iPhone, Safari › Compartir › "Agregar a inicio".</p></div>
+      <button class="btn ghost" id="out">Cerrar sesión</button></aside></div>`;
+  bindShare();
+  $("out").onclick = logout;
+  $("s-save").onclick = async () => {
+    const btn = $("s-save"); btn.disabled = true;
+    try {
+      const patch = {
+        price: Math.max(1, parseFloat($("s-price").value) || s.price),
+        require_prepay: $("s-pre").checked,
+        open_hour: +$("s-open").value, close_hour: +$("s-close").value,
+        admin_whatsapp: $("s-wa").value.trim(), bank_info: $("s-bank").value.trim(),
+      };
+      if (patch.close_hour <= patch.open_hour) throw new Error("La hora de cierre debe ser después de la de apertura.");
+      if (patch.admin_whatsapp && !/^09\d{8}$/.test(patch.admin_whatsapp)) throw new Error("El WhatsApp debe empezar con 09 y tener 10 dígitos.");
+      for (const [key, input] of [["qr_jardin_url", "s-qr-jardin"], ["qr_deuna_url", "s-qr-deuna"]]) {
+        const f = $(input).files[0]; if (!f) continue;
+        const path = `${key}-${Date.now()}.${(f.name.split(".").pop() || "png").toLowerCase()}`;
+        const { error } = await sb.storage.from("branding").upload(path, f, { contentType: f.type, upsert: true });
+        if (error) throw new Error("No se pudo subir la imagen del QR.");
+        patch[key] = sb.storage.from("branding").getPublicUrl(path).data.publicUrl;
+      }
+      const { error } = await sb.from("settings").update(patch).eq("id", 1);
+      if (error) throw error;
+      await loadSettings(); toast("Ajustes guardados."); renderAjustes();
+    } catch (e) { toast(errMsg(e)); btn.disabled = false; }
+  };
+}
+
+start();
+</script>
+</body>
+</html>
